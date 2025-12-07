@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>WarrantyGuard Pro</title>
+    
+    <!-- 1. Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. React & ReactDOM (Global) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 3. Babel Standalone (Untuk membaca JSX) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 4. Icons (Lucide Vanilla - Lebih Stabil) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- 5. QR Scanner -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+    <!-- Styles -->
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;700&display=swap');
+      
+      :root {
+        --primary: #00f2ea;
+        --bg-dark: #050b14;
+      }
+
+      body {
+        font-family: 'Outfit', sans-serif;
+        background-color: var(--bg-dark);
+        color: #e2e8f0;
+        overflow-x: hidden;
+        -webkit-tap-highlight-color: transparent;
+        background-image: 
+            radial-gradient(circle at 15% 50%, rgba(0, 242, 234, 0.08) 0%, transparent 25%),
+            radial-gradient(circle at 85% 30%, rgba(255, 0, 85, 0.08) 0%, transparent 25%);
+        min-height: 100vh;
+      }
+
+      .font-mono { font-family: 'Space Grotesk', monospace; }
+
+      /* Glass Effect */
+      .glass-card {
+        background: linear-gradient(180deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+      }
+      
+      .glass-nav {
+        background: rgba(5, 11, 20, 0.85);
+        backdrop-filter: blur(20px);
+        border-top: 1px solid rgba(255,255,255,0.1);
+      }
+
+      /* Animations */
+      @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+      .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+      
+      /* Scanner Customization */
+      #html5-qrcode-anchor-scan-type-change { display: none !important; }
+      #html5-qrcode-button-camera-permission { 
+        background: #00f2ea; color: #000; padding: 12px 24px; border-radius: 99px; font-weight: bold; border: none; margin-top: 20px;
+      }
+      video { border-radius: 1.5rem; object-fit: cover; }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- MAIN SCRIPT -->
+    <script type="text/babel">
+        // --- REACT SETUP ---
+        const { useState, useEffect, useRef } = React;
+
+        // --- ICON HELPER ---
+        const Icon = ({ name, size = 24, className = "" }) => {
+            return <i data-lucide={name} width={size} height={size} className={className}></i>;
+        };
+
+        // --- 1. SCANNER VIEW ---
+        const ScannerView = ({ onScan, onClose }) => {
+            const scannerRef = useRef(null);
+
+            useEffect(() => {
+                if(window.lucide) window.lucide.createIcons();
+                const timeout = setTimeout(() => {
+                    if(!document.getElementById("reader")) return;
+                    const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 }, false);
+                    scanner.render((decodedText) => { onScan(decodedText); scanner.clear(); }, (err) => {});
+                    scannerRef.current = scanner;
+                }, 100);
+                return () => { if(scannerRef.current) scannerRef.current.clear().catch(() => {}); clearTimeout(timeout); };
+            }, []);
+
+            return (
+                <div className="flex flex-col items-center justify-center h-[90vh] p-6 animate-slide-up">
+                    <div className="text-center mb-8">
+                        <h2 className="text-3xl font-bold text-white mb-2">Scan Code</h2>
+                        <p className="text-slate-400 text-sm">Arahkan kamera ke Barcode Produk</p>
+                    </div>
+                    <div className="relative w-full max-w-sm aspect-square bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-700">
+                        <div id="reader" className="w-full h-full"></div>
+                        <div className="absolute inset-0 pointer-events-none">
+                            <div className="absolute top-0 left-0 w-20 h-20 border-t-4 border-l-4 border-cyan-400 rounded-tl-3xl"></div>
+                            <div className="absolute top-0 right-0 w-20 h-20 border-t-4 border-r-4 border-cyan-400 rounded-tr-3xl"></div>
+                            <div className="absolute bottom-0 left-0 w-20 h-20 border-b-4 border-l-4 border-cyan-400 rounded-bl-3xl"></div>
+                            <div className="absolute bottom-0 right-0 w-20 h-20 border-b-4 border-r-4 border-cyan-400 rounded-br-3xl"></div>
+                            <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-red-500 shadow-[0_0_20px_red] opacity-50"></div>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="mt-12 px-8 py-3 rounded-full bg-slate-800 text-slate-300 font-medium hover:bg-slate-700 border border-slate-700 flex items-center gap-2">
+                        <Icon name="x" size={18} /> Batalkan
+                    </button>
+                </div>
+            );
+        };
+
+        // --- 2. DASHBOARD VIEW ---
+        const DashboardView = ({ products, onScan, onViewAll }) => {
+            const active = products.filter(p => p.daysLeft > 0).length;
+            const expired = products.length - active;
+            const health = products.length > 0 ? Math.round((active / products.length) * 100) : 100;
+
+            useEffect(() => { if(window.lucide) window.lucide.createIcons(); });
+
+            return (
+                <div className="p-5 pb-28 space-y-6 animate-slide-up">
+                    <div className="flex justify-between items-center pt-2">
+                        <div>
+                            <h1 className="text-2xl font-bold text-white tracking-tight">Warranty<span className="text-cyan-400">Guard</span></h1>
+                            <p className="text-slate-500 text-xs font-mono uppercase tracking-widest mt-1">System Online</p>
+                        </div>
+                        <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center">
+                            <Icon name="shield-check" className="text-cyan-400" size={20} />
+                        </div>
+                    </div>
+
+                    <div className="glass-card rounded-[2rem] p-6 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
+                        <div className="flex items-center gap-6 relative z-10">
+                            <div className="w-24 h-24 rounded-full border-[6px] border-slate-800 flex items-center justify-center relative" style={{background: `conic-gradient(#00f2ea ${health}%, #ef4444 0)`}}>
+                                <div className="w-20 h-20 bg-[#0f172a] rounded-full flex flex-col items-center justify-center">
+                                    <span className="text-xl font-bold text-white">{health}%</span>
+                                    <span className="text-[9px] text-slate-400 uppercase">Sehat</span>
+                                </div>
+                            </div>
+                            <div className="flex-1 space-y-3">
+                                <div className="flex justify-between items-center border-b border-slate-700/50 pb-2">
+                                    <span className="text-slate-400 text-xs">Aktif</span>
+                                    <span className="text-cyan-400 font-mono font-bold text-lg">{active} <span className="text-xs font-normal text-slate-500">Unit</span></span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-slate-400 text-xs">Expired</span>
+                                    <span className="text-red-400 font-mono font-bold text-lg">{expired} <span className="text-xs font-normal text-slate-500">Unit</span></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onClick={onScan} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl p-4 shadow-lg shadow-cyan-500/20 active:scale-95 transition-all group">
+                        <div className="flex items-center justify-center gap-3">
+                            <div className="bg-white/20 p-2 rounded-lg"><Icon name="qr-code" className="text-white" /></div>
+                            <span className="text-white font-bold text-lg">Scan Produk Baru</span>
+                        </div>
+                    </button>
+
+                    <div>
+                        <div className="flex justify-between items-center mb-4 px-1">
+                            <h3 className="text-white font-bold">Terbaru</h3>
+                            <button onClick={onViewAll} className="text-cyan-400 text-xs font-bold flex items-center gap-1">SEMUA <Icon name="arrow-right" size={12} /></button>
+                        </div>
+                        <div className="space-y-3">
+                            {products.slice(0, 3).map(p => (
+                                <div key={p.id} className="glass-card p-4 rounded-2xl flex items-center gap-4">
+                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${p.daysLeft > 0 ? 'bg-cyan-500/10 text-cyan-400' : 'bg-red-500/10 text-red-400'}`}>
+                                        <Icon name="box" size={20} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <h4 className="text-white font-medium truncate">{p.name}</h4>
+                                        <p className="text-slate-500 text-xs font-mono truncate">{p.serialNumber}</p>
+                                    </div>
+                                    <div className={`px-3 py-1.5 rounded-lg text-xs font-bold ${p.daysLeft > 0 ? 'bg-cyan-950 text-cyan-400' : 'bg-red-950 text-red-400'}`}>
+                                        {p.daysLeft > 0 ? `${p.daysLeft} Hari` : 'Expired'}
+                                    </div>
+                                </div>
+                            ))}
+                            {products.length === 0 && (
+                                <div className="text-center py-10 rounded-2xl border border-dashed border-slate-800 bg-slate-900/50">
+                                    <p className="text-slate-500 text-sm">Belum ada data tersimpan.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 3. ADD FORM VIEW ---
+        const AddFormView = ({ scannedCode, onSave, onCancel }) => {
+            useEffect(() => { if(window.lucide) window.lucide.createIcons(); });
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                onSave({
+                    name: fd.get('name'),
+                    serialNumber: fd.get('serialNumber'),
+                    purchaseDate: fd.get('purchaseDate'),
+                    warrantyMonths: parseInt(fd.get('warrantyMonths')),
+                    category: fd.get('category'),
+                    notes: fd.get('notes')
+                });
+            };
+
+            return (
+                <div className="p-5 pb-28 animate-slide-up">
+                    <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                        <Icon name="plus-circle" className="text-cyan-400" /> Tambah Produk
+                    </h2>
+                    <div className="glass-card p-4 rounded-xl mb-6 border-l-4 border-green-500 bg-green-900/10 flex items-center gap-4">
+                        <div className="bg-green-500/20 p-2.5 rounded-full text-green-400"><Icon name="check" size={20} /></div>
+                        <div className="overflow-hidden">
+                            <p className="text-green-400 text-[10px] font-bold uppercase tracking-wide">Serial Number</p>
+                            <p className="text-white font-mono text-lg truncate">{scannedCode}</p>
+                        </div>
+                    </div>
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-400 ml-1 uppercase font-bold">Nama Produk</label>
+                            <input name="name" required placeholder="Contoh: Laptop Gaming" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white focus:border-cyan-500 outline-none transition" />
+                        </div>
+                        <input type="hidden" name="serialNumber" value={scannedCode} />
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <label className="text-xs text-slate-400 ml-1 uppercase font-bold">Tanggal Beli</label>
+                                <input name="purchaseDate" type="date" required className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white outline-none" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs text-slate-400 ml-1 uppercase font-bold">Garansi (Bulan)</label>
+                                <input name="warrantyMonths" type="number" defaultValue="12" required className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white outline-none" />
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-400 ml-1 uppercase font-bold">Kategori</label>
+                            <select name="category" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white outline-none">
+                                <option value="Elektronik">Elektronik</option>
+                                <option value="Gadget">Gadget</option>
+                                <option value="Otomotif">Otomotif</option>
+                                <option value="Rumah Tangga">Rumah Tangga</option>
+                                <option value="Lainnya">Lainnya</option>
+                            </select>
+                        </div>
+                        <div className="space-y-1">
+                             <label className="text-xs text-slate-400 ml-1 uppercase font-bold">Catatan</label>
+                             <textarea name="notes" rows="2" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white outline-none"></textarea>
+                        </div>
+                        <div className="flex gap-3 pt-4">
+                            <button type="button" onClick={onCancel} className="flex-1 py-4 rounded-xl font-bold text-slate-400 bg-slate-900 border border-slate-700">Batal</button>
+                            <button type="submit" className="flex-1 py-4 rounded-xl font-bold text-black bg-cyan-400 hover:bg-cyan-300 shadow-lg shadow-cyan-400/20">Simpan Data</button>
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        // --- 4. LIST VIEW ---
+        const ListView = ({ products, onDelete }) => {
+            const [term, setTerm] = useState('');
+            const filtered = products.filter(p => 
+                p.name.toLowerCase().includes(term.toLowerCase()) || 
+                p.serialNumber.toLowerCase().includes(term.toLowerCase())
+            );
+            useEffect(() => { if(window.lucide) window.lucide.createIcons(); });
+
+            return (
+                <div className="p-5 pb-28 h-screen flex flex-col animate-slide-up">
+                    <h2 className="text-xl font-bold text-white mb-4">Semua Produk</h2>
+                    <div className="relative mb-6">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"><Icon name="search" size={20}/></div>
+                        <input value={term} onChange={e => setTerm(e.target.value)} placeholder="Cari..." className="w-full bg-slate-900 border border-slate-700 rounded-xl py-3 pl-12 pr-4 text-white outline-none focus:border-cyan-500 transition" />
+                    </div>
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-1 pb-20">
+                        {filtered.map(p => (
+                            <div key={p.id} className="glass-card p-5 rounded-2xl relative overflow-hidden">
+                                <div className={`absolute top-0 left-0 w-1.5 h-full ${p.daysLeft > 0 ? 'bg-cyan-500' : 'bg-red-600'}`}></div>
+                                <div className="flex justify-between items-start pl-3">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">{p.name}</h3>
+                                        <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 mt-1 inline-block uppercase tracking-wide">{p.category}</span>
+                                    </div>
+                                    <button onClick={() => onDelete(p.id)} className="p-2 text-slate-600 hover:text-red-500"><Icon name="trash-2" size={18} /></button>
+                                </div>
+                                <div className="mt-4 pl-3 grid grid-cols-2 gap-4">
+                                    <div>
+                                        <p className="text-slate-500 text-xs mb-0.5">Serial Number</p>
+                                        <p className="font-mono text-cyan-200 text-sm">{p.serialNumber}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-slate-500 text-xs mb-0.5">Exp Date</p>
+                                        <p className="text-white text-sm font-medium">{p.expireDate}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 5. SETTINGS VIEW (FILE BASED) ---
+        const SettingsView = ({ onExport, onImport }) => {
+            const fileInputRef = useRef(null);
+            useEffect(() => { if(window.lucide) window.lucide.createIcons(); });
+
+            return (
+                <div className="p-5 pb-28 animate-slide-up">
+                    <h2 className="text-xl font-bold text-white mb-6">Backup File Internal</h2>
+                    
+                    <div className="glass-card p-6 rounded-2xl mb-8 border border-cyan-500/20">
+                        <div className="flex items-center gap-4 mb-4">
+                            <div className="w-12 h-12 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+                                <Icon name="folder-archive" size={24} />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-white">Data Lokal</h3>
+                                <p className="text-xs text-slate-400">Simpan data sebagai file di HP</p>
+                            </div>
+                        </div>
+                        <p className="text-sm text-slate-400 leading-relaxed border-t border-slate-700 pt-4">
+                            Data akan disimpan sebagai file <b>.JSON</b> di folder Downloads anda. Anda bisa mengirim file ini ke WhatsApp atau Google Drive untuk disimpan.
+                        </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4">
+                        {/* Tombol Export */}
+                        <button onClick={onExport} className="glass-card p-5 rounded-xl flex items-center gap-4 hover:bg-slate-800 transition border-l-4 border-cyan-500 group">
+                            <div className="bg-cyan-500/20 p-3 rounded-full text-cyan-400 group-hover:bg-cyan-500 group-hover:text-black transition-colors">
+                                <Icon name="download" size={24} />
+                            </div>
+                            <div className="text-left">
+                                <h4 className="font-bold text-white">Download Backup</h4>
+                                <p className="text-xs text-slate-400">Simpan data ke File Internal</p>
+                            </div>
+                        </button>
+
+                        {/* Tombol Import */}
+                        <div className="relative">
+                            <input 
+                                type="file" 
+                                accept=".json" 
+                                ref={fileInputRef}
+                                onChange={onImport}
+                                className="hidden" 
+                            />
+                            <button onClick={() => fileInputRef.current.click()} className="w-full glass-card p-5 rounded-xl flex items-center gap-4 hover:bg-slate-800 transition border-l-4 border-green-500 group">
+                                <div className="bg-green-500/20 p-3 rounded-full text-green-400 group-hover:bg-green-500 group-hover:text-black transition-colors">
+                                    <Icon name="upload" size={24} />
+                                </div>
+                                <div className="text-left">
+                                    <h4 className="font-bold text-white">Restore Backup</h4>
+                                    <p className="text-xs text-slate-400">Buka file backup (.json)</p>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- ROOT COMPONENT ---
+        const App = () => {
+            const [view, setView] = useState('dashboard');
+            const [products, setProducts] = useState([]);
+            const [tempScan, setTempScan] = useState(null);
+
+            useEffect(() => {
+                try {
+                    const p = localStorage.getItem('WG_PRO_PRODUCTS');
+                    if(p) setProducts(JSON.parse(p));
+                } catch(e) { console.error("Load Error", e); }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('WG_PRO_PRODUCTS', JSON.stringify(products));
+            }, [products]);
+
+            useEffect(() => {
+                if(window.lucide) window.lucide.createIcons();
+            }, [view, products]);
+
+            const processProduct = (p) => {
+                const purchase = new Date(p.purchaseDate);
+                const expire = new Date(purchase);
+                expire.setMonth(expire.getMonth() + p.warrantyMonths);
+                const days = Math.ceil((expire - new Date()) / (1000 * 3600 * 24));
+                return {
+                    ...p,
+                    daysLeft: days,
+                    expireDate: expire.toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'})
+                };
+            };
+            const processed = products.map(processProduct).sort((a,b) => a.daysLeft - b.daysLeft);
+
+            // --- NEW FILE EXPORT LOGIC ---
+            const handleExport = () => {
+                const dataStr = JSON.stringify(products, null, 2);
+                const blob = new Blob([dataStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `warranty_backup_${new Date().toISOString().slice(0,10)}.json`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                alert("File berhasil didownload!");
+            };
+
+            // --- NEW FILE IMPORT LOGIC ---
+            const handleImport = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const json = JSON.parse(e.target.result);
+                        if (Array.isArray(json)) {
+                            if(confirm(`Restore ${json.length} data produk? Data lama akan ditimpa.`)) {
+                                setProducts(json);
+                                alert("Restore Berhasil!");
+                            }
+                        } else {
+                            alert("Format file salah!");
+                        }
+                    } catch (err) {
+                        alert("File rusak atau tidak valid.");
+                    }
+                };
+                reader.readAsText(file);
+                // Reset value agar bisa pilih file sama lagi jika perlu
+                event.target.value = null;
+            };
+
+            const NavBtn = ({ id, icon, label }) => (
+                <button onClick={() => setView(id)} className={`flex flex-col items-center gap-1 transition-all ${view === id ? 'text-cyan-400 scale-105' : 'text-slate-500'}`}>
+                    <Icon name={icon} size={24} className={view === id ? 'fill-cyan-400/10' : ''} />
+                    <span className="text-[10px] font-bold">{label}</span>
+                </button>
+            );
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen bg-[#050b14] shadow-2xl relative overflow-hidden">
+                    {view === 'dashboard' && <DashboardView products={processed} onScan={() => setView('scan')} onViewAll={() => setView('list')} />}
+                    {view === 'scan' && <ScannerView onScan={(c) => { setTempScan(c); setView('add'); }} onClose={() => setView('dashboard')} />}
+                    {view === 'add' && <AddFormView scannedCode={tempScan} onSave={(d) => { setProducts([{id:Date.now().toString(), ...d}, ...products]); setView('list'); }} onCancel={() => setView('dashboard')} />}
+                    {view === 'list' && <ListView products={processed} onDelete={(id) => confirm('Hapus?') && setProducts(products.filter(p => p.id !== id))} />}
+                    {view === 'settings' && <SettingsView onExport={handleExport} onImport={handleImport} />}
+
+                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass-nav px-8 py-4 flex justify-between items-end z-50 rounded-t-3xl">
+                        <NavBtn id="dashboard" icon="layout-grid" label="Home" />
+                        <div className="relative -top-6">
+                            <button onClick={() => setView('scan')} className="bg-gradient-to-tr from-cyan-500 to-blue-600 w-16 h-16 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.5)] border-[6px] border-[#050b14] active:scale-95 transition-transform">
+                                <Icon name="scan-line" className="text-white" size={28} />
+                            </button>
+                        </div>
+                        <NavBtn id="settings" icon="save" label="Backup" />
+                    </nav>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>

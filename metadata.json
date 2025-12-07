@@ -1,0 +1,7 @@
+{
+  "name": "WarrantyGuard",
+  "description": "Professional Warranty Management & Serial Number Scanner",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
