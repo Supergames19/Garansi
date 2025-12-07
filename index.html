@@ -142,7 +142,7 @@
             );
         };
 
-        // 1. SCANNER VIEW (UPDATED)
+        // 1. SCANNER VIEW (PERBAIKAN LOGIKA S/N)
         const ScannerView = ({ onScan, onClose }) => {
             const scannerRef = useRef(null);
             const [manualCode, setManualCode] = useState('');
@@ -150,12 +150,23 @@
 
             useEffect(() => {
                 if(window.lucide) window.lucide.createIcons();
+                
                 const timeout = setTimeout(() => {
                     if(!document.getElementById("reader")) return;
                     
                     const scanner = new Html5QrcodeScanner(
                         "reader", 
-                        { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+                        { 
+                            fps: 15, // Lebih responsif
+                            qrbox: { width: 300, height: 150 }, // Lebih lebar untuk barcode panjang
+                            aspectRatio: 1.0,
+                            formatsToSupport: [ 
+                                Html5QrcodeSupportedFormats.CODE_128, 
+                                Html5QrcodeSupportedFormats.CODE_39,
+                                Html5QrcodeSupportedFormats.QR_CODE,
+                                Html5QrcodeSupportedFormats.DATA_MATRIX 
+                            ]
+                        },
                         false
                     );
                     
@@ -172,27 +183,62 @@
             }, []);
 
             const handleScanLogic = (text, scannerInstance) => {
-                // REGEX: Mencari awalan SN, S/N, Serial (Case Insensitive)
-                // Mengambil group setelahnya sebagai kode
-                const regex = /^(?:SN|S\/N|SERIAL)\s*[:.]?\s*([A-Z0-9-]+)/i;
-                const match = text.match(regex);
+                let cleanCode = text.trim();
+                let isValid = false;
+                let rejectionReason = "";
+
+                // --- STRATEGI DETEKSI S/N ---
+                
+                // 1. Cek Prefix Eksplisit (SN, S/N, 1S untuk Lenovo, S untuk Asus/Umum)
+                // Banyak laptop barcode datanya mengandung "1S" atau "S" di awal meskipun di label tertulis "S/N"
+                const prefixRegex = /^(?:SN|S\/N|SERIAL|1S|S)\s*[:.]?\s*([A-Z0-9-]+)/i;
+                const match = cleanCode.match(prefixRegex);
 
                 if (match && match[1]) {
-                    // Valid S/N found
+                    // Jika ada prefix, kita ambil isinya saja
+                    cleanCode = match[1];
+                    isValid = true;
+                } 
+                else {
+                    // 2. Jika TIDAK ada prefix, kita gunakan Heuristik (Tebakan Cerdas)
+                    
+                    // Cek apakah isinya HANYA ANGKA? (Biasanya ini EAN/UPC produk, BUKAN S/N)
+                    const isPureNumber = /^\d+$/.test(cleanCode);
+                    
+                    // Cek apakah ada HURUF? (Serial Number Laptop PASTI ada hurufnya)
+                    const hasLetters = /[a-zA-Z]/.test(cleanCode);
+                    
+                    // Cek panjang karakter (S/N Laptop biasanya panjang, > 6 karakter)
+                    const isLong = cleanCode.length > 5;
+
+                    if (isPureNumber) {
+                        // Ini EAN/UPC (4711... atau 889...) -> TOLAK
+                        isValid = false;
+                        rejectionReason = "Barcode Produk (EAN) diabaikan. Cari S/N.";
+                    } else if (hasLetters && isLong) {
+                        // Ini Alphanumeric panjang -> KEMUNGKINAN BESAR S/N (Contoh: NXD4..., PF5R...) -> TERIMA
+                        isValid = true;
+                    } else {
+                        // Terlalu pendek atau format aneh
+                        isValid = false;
+                        rejectionReason = "Format tidak dikenali.";
+                    }
+                }
+
+                if (isValid) {
                     if(scannerInstance) scannerInstance.clear();
-                    onScan(match[1].toUpperCase()); // Kirim kode bersih tanpa prefix
+                    onScan(cleanCode.toUpperCase());
                 } else {
-                    // Invalid
-                    setErrorMsg(`Kode "${text}" bukan format S/N valid.`);
-                    setTimeout(() => setErrorMsg(''), 3000);
+                    // Tampilkan pesan error sementara tanpa stop scanner
+                    setErrorMsg(rejectionReason || `Abaikan ${text} (Bukan S/N)`);
+                    setTimeout(() => setErrorMsg(''), 1500);
                 }
             };
 
             const handleManualSubmit = (e) => {
                 e.preventDefault();
                 if(!manualCode) return;
-                // Manual input membolehkan apa saja, tapi kita bersihkan prefix jika user mengetiknya
-                const clean = manualCode.replace(/^(?:SN|S\/N|SERIAL)\s*[:.]?\s*/i, '').toUpperCase();
+                const clean = manualCode.replace(/^(?:SN|S\/N|SERIAL|1S|S)\s*[:.]?\s*/i, '').toUpperCase();
                 if(scannerRef.current) scannerRef.current.clear().catch(()=>{});
                 onScan(clean);
             };
@@ -201,27 +247,27 @@
                 <div className="flex flex-col items-center justify-center min-h-[90vh] p-6 animate-slide-up">
                     <div className="text-center mb-6">
                         <h2 className="text-2xl font-bold text-white mb-1">Scan Serial Number</h2>
-                        <p className="text-slate-400 text-xs">Otomatis deteksi awalan "SN", "S/N", atau "Serial"</p>
+                        <p className="text-slate-400 text-xs">Arahkan ke Barcode S/N (Mengandung Huruf & Angka)</p>
                     </div>
                     
                     {/* Camera Area */}
-                    <div className="relative w-full max-w-sm aspect-square bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-700 mb-6">
+                    <div className="relative w-full max-w-sm aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-700 mb-6">
                         <div id="reader" className="w-full h-full"></div>
                         
                         {/* Overlay */}
                         <div className="absolute inset-0 pointer-events-none">
-                            <div className="absolute top-0 left-0 w-16 h-16 border-t-4 border-l-4 border-cyan-400 rounded-tl-3xl"></div>
-                            <div className="absolute top-0 right-0 w-16 h-16 border-t-4 border-r-4 border-cyan-400 rounded-tr-3xl"></div>
-                            <div className="absolute bottom-0 left-0 w-16 h-16 border-b-4 border-l-4 border-cyan-400 rounded-bl-3xl"></div>
-                            <div className="absolute bottom-0 right-0 w-16 h-16 border-b-4 border-r-4 border-cyan-400 rounded-br-3xl"></div>
-                            <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-red-500 shadow-[0_0_20px_red] opacity-50"></div>
+                            <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-cyan-400 rounded-tl-xl"></div>
+                            <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-cyan-400 rounded-tr-xl"></div>
+                            <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-cyan-400 rounded-bl-xl"></div>
+                            <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-cyan-400 rounded-br-xl"></div>
+                            <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-red-500 shadow-[0_0_20px_red] opacity-70"></div>
                         </div>
 
                         {/* Error Toast inside camera */}
                         {errorMsg && (
-                            <div className="absolute top-4 left-4 right-4 bg-red-500/90 text-white text-xs p-3 rounded-lg text-center font-bold animate-bounce">
-                                <div className="flex items-center justify-center gap-2">
-                                    <Icon name="alert-circle" size={16} /> {errorMsg}
+                            <div className="absolute top-4 left-0 right-0 flex justify-center z-10">
+                                <div className="bg-red-500/90 text-white text-[10px] px-4 py-2 rounded-full font-bold animate-bounce shadow-lg">
+                                    {errorMsg}
                                 </div>
                             </div>
                         )}
