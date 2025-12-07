@@ -21,6 +21,19 @@
     <!-- 5. QR Scanner -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
+    <!-- 6. Google GenAI SDK (Via CDN for browser) -->
+    <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.run/@google/genai",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0"
+  }
+}
+</script>
+
     <!-- Styles -->
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;700&display=swap');
@@ -53,6 +66,11 @@
         box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
       }
       
+      .glass-modal {
+        background: rgba(5, 11, 20, 0.95);
+        backdrop-filter: blur(20px);
+      }
+      
       .glass-nav {
         background: rgba(5, 11, 20, 0.85);
         backdrop-filter: blur(20px);
@@ -70,24 +88,15 @@
       }
       video { border-radius: 1.5rem; object-fit: cover; }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.1",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
-    "react/": "https://aistudiocdn.com/react@^19.2.1/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0"
-  }
-}
-</script>
 <link rel="stylesheet" href="/index.css">
 </head>
 <body>
     <div id="root"></div>
 
     <!-- MAIN SCRIPT -->
-    <script type="text/babel">
+    <script type="text/babel" data-type="module">
+        import { GoogleGenAI } from "@google/genai";
+
         // --- REACT SETUP ---
         const { useState, useEffect, useRef } = React;
 
@@ -96,45 +105,156 @@
             return <i data-lucide={name} width={size} height={size} className={className}></i>;
         };
 
-        // --- 1. SCANNER VIEW ---
+        // --- COMPONENTS ---
+
+        // 0. AI KEY MODAL
+        const ApiKeyModal = ({ isOpen, onSave, onSkip }) => {
+            const [key, setKey] = useState('');
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 glass-modal animate-slide-up">
+                    <div className="w-full max-w-sm glass-card p-6 rounded-2xl border border-cyan-500/30 shadow-[0_0_50px_rgba(0,242,234,0.1)]">
+                        <div className="text-center mb-6">
+                            <div className="w-16 h-16 bg-cyan-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-cyan-400">
+                                <Icon name="bot" size={32} />
+                            </div>
+                            <h2 className="text-2xl font-bold text-white">AI Assistant</h2>
+                            <p className="text-slate-400 text-sm mt-2">Masukkan Google Gemini API Key untuk fitur pintar (opsional).</p>
+                        </div>
+                        
+                        <input 
+                            type="password" 
+                            placeholder="Paste API Key disini..." 
+                            value={key}
+                            onChange={(e) => setKey(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white focus:border-cyan-500 outline-none transition mb-4 font-mono text-sm"
+                        />
+
+                        <div className="flex gap-3">
+                            <button onClick={onSkip} className="flex-1 py-3 rounded-xl font-bold text-slate-400 bg-slate-800 hover:bg-slate-700 border border-slate-700">Lewati</button>
+                            <button onClick={() => onSave(key)} className="flex-1 py-3 rounded-xl font-bold text-black bg-cyan-400 hover:bg-cyan-300 shadow-lg shadow-cyan-400/20 disabled:opacity-50" disabled={!key}>Simpan</button>
+                        </div>
+                        <p className="text-[10px] text-center mt-4 text-slate-500">Key disimpan lokal di perangkat Anda.</p>
+                    </div>
+                </div>
+            );
+        };
+
+        // 1. SCANNER VIEW (UPDATED)
         const ScannerView = ({ onScan, onClose }) => {
             const scannerRef = useRef(null);
+            const [manualCode, setManualCode] = useState('');
+            const [errorMsg, setErrorMsg] = useState('');
 
             useEffect(() => {
                 if(window.lucide) window.lucide.createIcons();
                 const timeout = setTimeout(() => {
                     if(!document.getElementById("reader")) return;
-                    const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 }, false);
-                    scanner.render((decodedText) => { onScan(decodedText); scanner.clear(); }, (err) => {});
+                    
+                    const scanner = new Html5QrcodeScanner(
+                        "reader", 
+                        { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+                        false
+                    );
+                    
+                    scanner.render((decodedText) => {
+                        handleScanLogic(decodedText, scanner);
+                    }, (err) => {}); 
                     scannerRef.current = scanner;
                 }, 100);
-                return () => { if(scannerRef.current) scannerRef.current.clear().catch(() => {}); clearTimeout(timeout); };
+
+                return () => {
+                     if(scannerRef.current) scannerRef.current.clear().catch(() => {});
+                     clearTimeout(timeout);
+                };
             }, []);
 
+            const handleScanLogic = (text, scannerInstance) => {
+                // REGEX: Mencari awalan SN, S/N, Serial (Case Insensitive)
+                // Mengambil group setelahnya sebagai kode
+                const regex = /^(?:SN|S\/N|SERIAL)\s*[:.]?\s*([A-Z0-9-]+)/i;
+                const match = text.match(regex);
+
+                if (match && match[1]) {
+                    // Valid S/N found
+                    if(scannerInstance) scannerInstance.clear();
+                    onScan(match[1].toUpperCase()); // Kirim kode bersih tanpa prefix
+                } else {
+                    // Invalid
+                    setErrorMsg(`Kode "${text}" bukan format S/N valid.`);
+                    setTimeout(() => setErrorMsg(''), 3000);
+                }
+            };
+
+            const handleManualSubmit = (e) => {
+                e.preventDefault();
+                if(!manualCode) return;
+                // Manual input membolehkan apa saja, tapi kita bersihkan prefix jika user mengetiknya
+                const clean = manualCode.replace(/^(?:SN|S\/N|SERIAL)\s*[:.]?\s*/i, '').toUpperCase();
+                if(scannerRef.current) scannerRef.current.clear().catch(()=>{});
+                onScan(clean);
+            };
+
             return (
-                <div className="flex flex-col items-center justify-center h-[90vh] p-6 animate-slide-up">
-                    <div className="text-center mb-8">
-                        <h2 className="text-3xl font-bold text-white mb-2">Scan Code</h2>
-                        <p className="text-slate-400 text-sm">Arahkan kamera ke Barcode Produk</p>
+                <div className="flex flex-col items-center justify-center min-h-[90vh] p-6 animate-slide-up">
+                    <div className="text-center mb-6">
+                        <h2 className="text-2xl font-bold text-white mb-1">Scan Serial Number</h2>
+                        <p className="text-slate-400 text-xs">Otomatis deteksi awalan "SN", "S/N", atau "Serial"</p>
                     </div>
-                    <div className="relative w-full max-w-sm aspect-square bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-700">
+                    
+                    {/* Camera Area */}
+                    <div className="relative w-full max-w-sm aspect-square bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-700 mb-6">
                         <div id="reader" className="w-full h-full"></div>
+                        
+                        {/* Overlay */}
                         <div className="absolute inset-0 pointer-events-none">
-                            <div className="absolute top-0 left-0 w-20 h-20 border-t-4 border-l-4 border-cyan-400 rounded-tl-3xl"></div>
-                            <div className="absolute top-0 right-0 w-20 h-20 border-t-4 border-r-4 border-cyan-400 rounded-tr-3xl"></div>
-                            <div className="absolute bottom-0 left-0 w-20 h-20 border-b-4 border-l-4 border-cyan-400 rounded-bl-3xl"></div>
-                            <div className="absolute bottom-0 right-0 w-20 h-20 border-b-4 border-r-4 border-cyan-400 rounded-br-3xl"></div>
+                            <div className="absolute top-0 left-0 w-16 h-16 border-t-4 border-l-4 border-cyan-400 rounded-tl-3xl"></div>
+                            <div className="absolute top-0 right-0 w-16 h-16 border-t-4 border-r-4 border-cyan-400 rounded-tr-3xl"></div>
+                            <div className="absolute bottom-0 left-0 w-16 h-16 border-b-4 border-l-4 border-cyan-400 rounded-bl-3xl"></div>
+                            <div className="absolute bottom-0 right-0 w-16 h-16 border-b-4 border-r-4 border-cyan-400 rounded-br-3xl"></div>
                             <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-red-500 shadow-[0_0_20px_red] opacity-50"></div>
                         </div>
+
+                        {/* Error Toast inside camera */}
+                        {errorMsg && (
+                            <div className="absolute top-4 left-4 right-4 bg-red-500/90 text-white text-xs p-3 rounded-lg text-center font-bold animate-bounce">
+                                <div className="flex items-center justify-center gap-2">
+                                    <Icon name="alert-circle" size={16} /> {errorMsg}
+                                </div>
+                            </div>
+                        )}
                     </div>
-                    <button onClick={onClose} className="mt-12 px-8 py-3 rounded-full bg-slate-800 text-slate-300 font-medium hover:bg-slate-700 border border-slate-700 flex items-center gap-2">
-                        <Icon name="x" size={18} /> Batalkan
+
+                    {/* Manual Input Section */}
+                    <div className="w-full max-w-sm">
+                        <div className="flex items-center gap-2 mb-2">
+                            <div className="h-px bg-slate-800 flex-1"></div>
+                            <span className="text-slate-500 text-[10px] font-bold uppercase">Atau Input Manual</span>
+                            <div className="h-px bg-slate-800 flex-1"></div>
+                        </div>
+                        <form onSubmit={handleManualSubmit} className="flex gap-2">
+                            <input 
+                                value={manualCode}
+                                onChange={e => setManualCode(e.target.value)}
+                                placeholder="Ketik Kode S/N..." 
+                                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:border-cyan-500 outline-none"
+                            />
+                            <button type="submit" className="bg-cyan-500 text-black p-3 rounded-xl font-bold hover:bg-cyan-400 transition">
+                                <Icon name="arrow-right" size={20} />
+                            </button>
+                        </form>
+                    </div>
+
+                    <button onClick={onClose} className="mt-8 text-slate-400 hover:text-white text-sm font-medium flex items-center gap-2">
+                        <Icon name="x" size={16} /> Batalkan Scan
                     </button>
                 </div>
             );
         };
 
-        // --- 2. DASHBOARD VIEW ---
+        // 2. DASHBOARD VIEW
         const DashboardView = ({ products, onScan, onViewAll }) => {
             const active = products.filter(p => p.daysLeft > 0).length;
             const expired = products.length - active;
@@ -214,9 +334,30 @@
             );
         };
 
-        // --- 3. ADD FORM VIEW ---
-        const AddFormView = ({ scannedCode, onSave, onCancel }) => {
+        // 3. ADD FORM VIEW
+        const AddFormView = ({ scannedCode, onSave, onCancel, apiKey }) => {
+            const [aiTip, setAiTip] = useState('');
+            const [loadingAi, setLoadingAi] = useState(false);
+
             useEffect(() => { if(window.lucide) window.lucide.createIcons(); });
+            
+            // AI Suggestion Feature
+            const handleAskAi = async (productName) => {
+                if(!apiKey || !productName) return;
+                setLoadingAi(true);
+                try {
+                    const ai = new GoogleGenAI({ apiKey: apiKey });
+                    const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
+                    const result = await model.generateContent(`Berikan 1 tips singkat (maksimal 15 kata) cara merawat ${productName} agar awet.`);
+                    setAiTip(result.response.text());
+                } catch(e) {
+                    console.error(e);
+                    setAiTip("Gagal memuat tips AI.");
+                } finally {
+                    setLoadingAi(false);
+                }
+            };
+
             const handleSubmit = (e) => {
                 e.preventDefault();
                 const fd = new FormData(e.target);
@@ -226,7 +367,8 @@
                     purchaseDate: fd.get('purchaseDate'),
                     warrantyMonths: parseInt(fd.get('warrantyMonths')),
                     category: fd.get('category'),
-                    notes: fd.get('notes')
+                    notes: fd.get('notes'),
+                    aiTip: aiTip // Simpan tips AI juga jika ada
                 });
             };
 
@@ -235,19 +377,47 @@
                     <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
                         <Icon name="plus-circle" className="text-cyan-400" /> Tambah Produk
                     </h2>
+                    
                     <div className="glass-card p-4 rounded-xl mb-6 border-l-4 border-green-500 bg-green-900/10 flex items-center gap-4">
                         <div className="bg-green-500/20 p-2.5 rounded-full text-green-400"><Icon name="check" size={20} /></div>
-                        <div className="overflow-hidden">
-                            <p className="text-green-400 text-[10px] font-bold uppercase tracking-wide">Serial Number</p>
-                            <p className="text-white font-mono text-lg truncate">{scannedCode}</p>
+                        <div className="overflow-hidden w-full">
+                            <p className="text-green-400 text-[10px] font-bold uppercase tracking-wide">Serial Number (Verified)</p>
+                            {/* Input S/N bisa diedit jika perlu */}
+                            <input 
+                                name="serialNumber" 
+                                defaultValue={scannedCode} 
+                                className="w-full bg-transparent text-white font-mono text-lg truncate outline-none border-b border-dashed border-slate-600 focus:border-cyan-400"
+                            />
                         </div>
                     </div>
+
                     <form onSubmit={handleSubmit} className="space-y-5">
                         <div className="space-y-1">
                             <label className="text-xs text-slate-400 ml-1 uppercase font-bold">Nama Produk</label>
-                            <input name="name" required placeholder="Contoh: Laptop Gaming" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-white focus:border-cyan-500 outline-none transition" />
+                            <div className="relative">
+                                <input 
+                                    name="name" 
+                                    required 
+                                    placeholder="Contoh: Laptop Gaming" 
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 pr-12 text-white focus:border-cyan-500 outline-none transition"
+                                    onBlur={(e) => apiKey && handleAskAi(e.target.value)} 
+                                />
+                                {apiKey && (
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-cyan-400">
+                                        <Icon name="sparkles" size={16} />
+                                    </div>
+                                )}
+                            </div>
+                            {/* AI Tip Display */}
+                            {loadingAi && <p className="text-[10px] text-cyan-400 animate-pulse ml-2">🤖 AI sedang berpikir...</p>}
+                            {aiTip && (
+                                <div className="mt-2 bg-cyan-900/20 border border-cyan-500/30 p-3 rounded-lg text-xs text-cyan-200 flex gap-2 items-start">
+                                    <Icon name="lightbulb" size={14} className="mt-0.5 shrink-0" />
+                                    {aiTip}
+                                </div>
+                            )}
                         </div>
-                        <input type="hidden" name="serialNumber" value={scannedCode} />
+                        
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-1">
                                 <label className="text-xs text-slate-400 ml-1 uppercase font-bold">Tanggal Beli</label>
@@ -281,7 +451,7 @@
             );
         };
 
-        // --- 4. LIST VIEW ---
+        // 4. LIST VIEW
         const ListView = ({ products, onDelete }) => {
             const [term, setTerm] = useState('');
             const filtered = products.filter(p => 
@@ -304,7 +474,10 @@
                                 <div className="flex justify-between items-start pl-3">
                                     <div>
                                         <h3 className="text-lg font-bold text-white">{p.name}</h3>
-                                        <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 mt-1 inline-block uppercase tracking-wide">{p.category}</span>
+                                        <div className="flex gap-2 mt-1">
+                                            <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 uppercase tracking-wide">{p.category}</span>
+                                            {p.aiTip && <span className="text-[10px] text-cyan-400 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800 flex items-center gap-1"><Icon name="sparkles" size={10} /> Tips AI</span>}
+                                        </div>
                                     </div>
                                     <button onClick={() => onDelete(p.id)} className="p-2 text-slate-600 hover:text-red-500"><Icon name="trash-2" size={18} /></button>
                                 </div>
@@ -318,6 +491,11 @@
                                         <p className="text-white text-sm font-medium">{p.expireDate}</p>
                                     </div>
                                 </div>
+                                {p.aiTip && (
+                                    <div className="mt-3 pl-3 pt-3 border-t border-slate-700/50 text-xs text-slate-400 italic">
+                                        "{p.aiTip}"
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
@@ -325,43 +503,43 @@
             );
         };
 
-        // --- 5. SETTINGS VIEW (FILE BASED) ---
-        const SettingsView = ({ onExport, onImport }) => {
+        // 5. SETTINGS VIEW
+        const SettingsView = ({ onExport, onImport, apiKey, resetKey }) => {
             const fileInputRef = useRef(null);
             useEffect(() => { if(window.lucide) window.lucide.createIcons(); });
 
             return (
                 <div className="p-5 pb-28 animate-slide-up">
-                    <h2 className="text-xl font-bold text-white mb-6">Backup File Internal</h2>
+                    <h2 className="text-xl font-bold text-white mb-6">Pengaturan</h2>
                     
-                    <div className="glass-card p-6 rounded-2xl mb-8 border border-cyan-500/20">
-                        <div className="flex items-center gap-4 mb-4">
-                            <div className="w-12 h-12 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400">
-                                <Icon name="folder-archive" size={24} />
+                    {/* Status API Key */}
+                    <div className="glass-card p-4 rounded-xl mb-6 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${apiKey ? 'bg-cyan-500/10 text-cyan-400' : 'bg-slate-700/30 text-slate-500'}`}>
+                                <Icon name="bot" size={20} />
                             </div>
                             <div>
-                                <h3 className="font-bold text-white">Data Lokal</h3>
-                                <p className="text-xs text-slate-400">Simpan data sebagai file di HP</p>
+                                <h4 className="font-bold text-white text-sm">AI Assistant</h4>
+                                <p className="text-[10px] text-slate-400">{apiKey ? 'Aktif' : 'Non-aktif'}</p>
                             </div>
                         </div>
-                        <p className="text-sm text-slate-400 leading-relaxed border-t border-slate-700 pt-4">
-                            Data akan disimpan sebagai file <b>.JSON</b> di folder Downloads anda. Anda bisa mengirim file ini ke WhatsApp atau Google Drive untuk disimpan.
-                        </p>
+                        <button onClick={resetKey} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300">
+                            {apiKey ? 'Ubah Key' : 'Set Key'}
+                        </button>
                     </div>
 
+                    <h3 className="text-sm font-bold text-slate-500 uppercase mb-3 ml-1">Data Backup</h3>
                     <div className="grid grid-cols-1 gap-4">
-                        {/* Tombol Export */}
                         <button onClick={onExport} className="glass-card p-5 rounded-xl flex items-center gap-4 hover:bg-slate-800 transition border-l-4 border-cyan-500 group">
                             <div className="bg-cyan-500/20 p-3 rounded-full text-cyan-400 group-hover:bg-cyan-500 group-hover:text-black transition-colors">
                                 <Icon name="download" size={24} />
                             </div>
                             <div className="text-left">
                                 <h4 className="font-bold text-white">Download Backup</h4>
-                                <p className="text-xs text-slate-400">Simpan data ke File Internal</p>
+                                <p className="text-xs text-slate-400">Simpan data ke File Internal (.json)</p>
                             </div>
                         </button>
 
-                        {/* Tombol Import */}
                         <div className="relative">
                             <input 
                                 type="file" 
@@ -390,11 +568,27 @@
             const [view, setView] = useState('dashboard');
             const [products, setProducts] = useState([]);
             const [tempScan, setTempScan] = useState(null);
+            
+            // AI Key State
+            const [apiKey, setApiKey] = useState('');
+            const [showKeyModal, setShowKeyModal] = useState(false);
 
             useEffect(() => {
                 try {
                     const p = localStorage.getItem('WG_PRO_PRODUCTS');
+                    const k = localStorage.getItem('WG_AI_KEY');
+                    
                     if(p) setProducts(JSON.parse(p));
+                    
+                    // Logic Pop-up: Jika key belum ada, tampilkan modal
+                    if(k) {
+                        setApiKey(k);
+                    } else {
+                        // Cek apakah user pernah skip? Jika mau paksa muncul tiap kali kosong, hapus cek 'WG_SKIP_KEY'
+                        const skipped = localStorage.getItem('WG_SKIP_KEY');
+                        if(!skipped) setShowKeyModal(true);
+                    }
+
                 } catch(e) { console.error("Load Error", e); }
             }, []);
 
@@ -405,6 +599,17 @@
             useEffect(() => {
                 if(window.lucide) window.lucide.createIcons();
             }, [view, products]);
+
+            const handleSaveKey = (key) => {
+                setApiKey(key);
+                localStorage.setItem('WG_AI_KEY', key);
+                setShowKeyModal(false);
+            };
+
+            const handleSkipKey = () => {
+                localStorage.setItem('WG_SKIP_KEY', 'true');
+                setShowKeyModal(false);
+            };
 
             const processProduct = (p) => {
                 const purchase = new Date(p.purchaseDate);
@@ -419,7 +624,6 @@
             };
             const processed = products.map(processProduct).sort((a,b) => a.daysLeft - b.daysLeft);
 
-            // --- NEW FILE EXPORT LOGIC ---
             const handleExport = () => {
                 const dataStr = JSON.stringify(products, null, 2);
                 const blob = new Blob([dataStr], { type: "application/json" });
@@ -430,32 +634,21 @@
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-                alert("File berhasil didownload!");
             };
 
-            // --- NEW FILE IMPORT LOGIC ---
             const handleImport = (event) => {
                 const file = event.target.files[0];
                 if (!file) return;
-
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     try {
                         const json = JSON.parse(e.target.result);
                         if (Array.isArray(json)) {
-                            if(confirm(`Restore ${json.length} data produk? Data lama akan ditimpa.`)) {
-                                setProducts(json);
-                                alert("Restore Berhasil!");
-                            }
-                        } else {
-                            alert("Format file salah!");
-                        }
-                    } catch (err) {
-                        alert("File rusak atau tidak valid.");
-                    }
+                            if(confirm(`Restore ${json.length} data?`)) setProducts(json);
+                        } else alert("Format salah!");
+                    } catch (err) { alert("File rusak."); }
                 };
                 reader.readAsText(file);
-                // Reset value agar bisa pilih file sama lagi jika perlu
                 event.target.value = null;
             };
 
@@ -468,11 +661,13 @@
 
             return (
                 <div className="max-w-md mx-auto min-h-screen bg-[#050b14] shadow-2xl relative overflow-hidden">
+                    <ApiKeyModal isOpen={showKeyModal} onSave={handleSaveKey} onSkip={handleSkipKey} />
+
                     {view === 'dashboard' && <DashboardView products={processed} onScan={() => setView('scan')} onViewAll={() => setView('list')} />}
                     {view === 'scan' && <ScannerView onScan={(c) => { setTempScan(c); setView('add'); }} onClose={() => setView('dashboard')} />}
-                    {view === 'add' && <AddFormView scannedCode={tempScan} onSave={(d) => { setProducts([{id:Date.now().toString(), ...d}, ...products]); setView('list'); }} onCancel={() => setView('dashboard')} />}
+                    {view === 'add' && <AddFormView scannedCode={tempScan} apiKey={apiKey} onSave={(d) => { setProducts([{id:Date.now().toString(), ...d}, ...products]); setView('list'); }} onCancel={() => setView('dashboard')} />}
                     {view === 'list' && <ListView products={processed} onDelete={(id) => confirm('Hapus?') && setProducts(products.filter(p => p.id !== id))} />}
-                    {view === 'settings' && <SettingsView onExport={handleExport} onImport={handleImport} />}
+                    {view === 'settings' && <SettingsView onExport={handleExport} onImport={handleImport} apiKey={apiKey} resetKey={() => setShowKeyModal(true)} />}
 
                     <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass-nav px-8 py-4 flex justify-between items-end z-50 rounded-t-3xl">
                         <NavBtn id="dashboard" icon="layout-grid" label="Home" />
@@ -481,7 +676,7 @@
                                 <Icon name="scan-line" className="text-white" size={28} />
                             </button>
                         </div>
-                        <NavBtn id="settings" icon="save" label="Backup" />
+                        <NavBtn id="settings" icon="settings" label="Setting" />
                     </nav>
                 </div>
             );
